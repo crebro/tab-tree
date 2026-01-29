@@ -6,7 +6,8 @@
   "manifest_version": 3,
   "permissions": [
     "tabs",
-    "storage"
+    "storage",
+    "sidePanel"
   ],
   "icons": {
     "16": "icon/icon16.png",
@@ -16,7 +17,18 @@
   "action": {
     "default_popup": "index.html"
   },
+  "side_panel": {
+    "default_path": "index.html"
+  },
   "background": {
     "service_worker": "src/background.ts"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      }
+    }
   }
 }

@@ -111,7 +111,80 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const refreshHandler = (
+      message: any,
+      sender: chrome.runtime.MessageSender,
+      sendResponse: (response?: any) => void
+    ) => {
+      if (message?.action === "REFRESH") {
+        switch (message?.type) {
+          case "CREATE":
+            const createMessgae = message as AdditionMessageInterface;
+            const tabObj = buildTabObj(createMessgae.identifierOrTab);
+
+            if (tabObj.openerTabId && tabMap[tabObj.openerTabId]) {
+              setTabMap((prevTabMap) => {
+                let newTabMap = { ...prevTabMap, [tabObj.id]: tabObj };
+                newTabMap[tabObj.openerTabId!].children.push(tabObj);
+                return newTabMap;
+              });
+            } else {
+              setRoots((prevRoots) => {
+                return [...prevRoots, tabObj];
+              })
+            }
+
+            break;
+          case "DELETE":
+            const deleteMessage = message as DeleteTabMessageInterface;
+
+            // check if tab is top level by looking at roots
+            const isTopLevel = roots.some(root => root.id === deleteMessage.identifierOrTab);
+            const tab = tabMap[deleteMessage.identifierOrTab];
+
+            if (isTopLevel) {
+              setRoots((prevRoots) => {
+                const filteredRoots = prevRoots.filter(root => root.id !== tab.id);
+                if (tab.children) {
+                  filteredRoots.push(...tab.children);
+                }
+                return filteredRoots;
+              });
+
+            } else {
+              // not top level
+              setTabMap((prevTabMap) => {
+                const newTabMap = { ...prevTabMap };
+                const tabToDelete = newTabMap[deleteMessage.identifierOrTab];
+                if (tabToDelete && tabToDelete.openerTabId && newTabMap[tabToDelete.openerTabId]) {
+                  const parentTab = newTabMap[tabToDelete.openerTabId];
+                  parentTab.children = parentTab.children.filter(child => child.id !== tabToDelete.id);
+                  // add deleted tab's children to parent
+                  if (tabToDelete.children) {
+                    parentTab.children.push(...tabToDelete.children);
+                  }
+                }
+                delete newTabMap[deleteMessage.identifierOrTab];
+                return newTabMap;
+              });
+            }
+
+            break;
+          case "UPDATE":
+            initTree();
+            break;
+          default:
+            break;
+        }
+      }
+    };
+
     initTree();
+    chrome.runtime.onMessage.addListener(refreshHandler);
+
+    return () => {
+      chrome.runtime.onMessage.removeListener(refreshHandler);
+    };
   }, [initTree]);
 
   const onSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -287,7 +360,6 @@ const App: React.FC = () => {
             treeData={treeData}
             selectedKeys={activeKeys}
             titleRender={renderTabTitle}
-            height={500} // Virtual scroll for performance
             itemHeight={40} // Reduced height
           />
         ) : (
