@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, Children } from "react";
 import "./App.css";
 import { Tree, Input, Spin, Empty, Dropdown, MenuProps } from "antd";
 import { 
@@ -88,13 +88,15 @@ const getTreeData = (tabMap: Record<number, TabObj>, roots: number[]): TreeConte
 
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  const [roots, setRoots] = useState<number[]>([]);
   const [tabMap, setTabMap] = useState<Record<number, TabObj>>({});
   const [activeKeys, setActiveKeys] = useState<number[]>([]);
   const [searchValue, setSearchValue] = useState('');
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [autoExpandParent, setAutoExpandParent] = useState(true);
 
+  const roots = useMemo<number[]>(() => {
+    return Object.values(tabMap).filter(tab => !tab.openerTabId).map(tab => tab.id);
+  }, [tabMap]);
 
   const initTree = useCallback(() => {
     setLoading(true);
@@ -102,7 +104,6 @@ const App: React.FC = () => {
       chrome.storage.local.get(['openerTabIdMap'], (result) => {
         const openerTabIdMap = result.openerTabIdMap || {};
         const newTabMap: Record<number, TabObj> = {};
-        const newRoots: number[] = [];
         const newActiveKeys: number[] = [];
 
         // 1. Create all TabObjs
@@ -123,12 +124,9 @@ const App: React.FC = () => {
         Object.values(newTabMap).forEach((tabObj) => {
           if (tabObj.openerTabId && newTabMap[tabObj.openerTabId]) {
             newTabMap[tabObj.openerTabId].children.push(tabObj.id);
-          } else {
-            newRoots.push(tabObj.id);
           }
         });
 
-        setRoots(newRoots);
         setTabMap(newTabMap);
         setActiveKeys(newActiveKeys);
         setExpandedKeys(Object.keys(newTabMap).map(Number)); // Expand all by default
@@ -154,10 +152,6 @@ const App: React.FC = () => {
               let newTabMap: Record<number, TabObj> = { ...prevTabMap, [tabObj.id]: tabObj };
               if (tabObj.openerTabId && tabMap[tabObj.openerTabId]) {
                 newTabMap[tabObj.openerTabId!].children.push(tabObj.id);
-              } else {
-                setRoots((prevRoots) => {
-                  return [...prevRoots, tabObj.id];
-                });
               }
 
               return newTabMap;
@@ -167,46 +161,36 @@ const App: React.FC = () => {
           case "DELETE":
             const deleteMessage = message as DeleteTabMessageInterface;
 
-            // check if tab is top level by looking at roots
-            const isTopLevel = roots.some(root => root === deleteMessage.identifierOrTab);
-            const tab = tabMap[deleteMessage.identifierOrTab];
-
-            if (isTopLevel) {
-              setRoots((prevRoots) => {
-                let filteredRoots = prevRoots.filter(root => root !== tab.id);
-                if (tab.children) {
-                  filteredRoots.push(...tab.children);
+            setTabMap((prevTabMap) => {
+              let newTabMap = { ...prevTabMap };
+              let tabToDelete = newTabMap[deleteMessage.identifierOrTab];
+              if (tabToDelete && tabToDelete.openerTabId && newTabMap[tabToDelete.openerTabId]) {
+                // if tab has a parent, it's children should be reattached to parent
+                newTabMap[tabToDelete.openerTabId].children = newTabMap[tabToDelete.openerTabId].children.filter(child => child !== tabToDelete.id);
+                // add deleted tab's children to parent
+                if (tabToDelete.children) {
+                  newTabMap[tabToDelete.openerTabId].children.push(...tabToDelete.children);
                 }
-
-                setTabMap((prevTabMap) => {
-                  let newTabMap = { ...prevTabMap };
-                  delete newTabMap[deleteMessage.identifierOrTab];
-                  return newTabMap;
-                });
-                return filteredRoots;
-              });
-
-            } else {
-              // not top level
-              setTabMap((prevTabMap) => {
-                let newTabMap = { ...prevTabMap };
-                let tabToDelete = newTabMap[deleteMessage.identifierOrTab];
-                if (tabToDelete && tabToDelete.openerTabId && newTabMap[tabToDelete.openerTabId]) {
-                  newTabMap[tabToDelete.openerTabId].children = newTabMap[tabToDelete.openerTabId].children.filter(child => child !== tabToDelete.id);
-                  // add deleted tab's children to parent
-                  if (tabToDelete.children) {
-                    newTabMap[tabToDelete.openerTabId].children.push(...tabToDelete.children);
-                  }
-                }
-                delete newTabMap[deleteMessage.identifierOrTab];
-                return newTabMap;
-              });
-            }
+              }
+              delete newTabMap[deleteMessage.identifierOrTab];
+              return newTabMap;
+            });
 
             break;
-          // case "UPDATE":
-          //   initTree();
-          //   break;
+          case "UPDATE":
+            const updateMessage = message as AdditionMessageInterface;
+            const updatedTabObj = buildTabObj(updateMessage.identifierOrTab);
+
+              setTabMap((prevTabMap) => {
+                return { ...prevTabMap,
+                  [updatedTabObj.id]: {
+                  ...updatedTabObj,
+                  children: prevTabMap[updatedTabObj.id].children
+                  }
+                };
+              })
+
+            break;
           default:
             break;
         }
