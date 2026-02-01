@@ -17,12 +17,14 @@ interface TabObj {
   id: number;
   windowId: number;
   openerTabId?: number;
-  children: TabObj[];
+  children: number[];
   title?: string;
   favIconUrl?: string;
   active?: boolean;
   url?: string;
 }
+
+type TreeContents = { key: number, title: string, children?: TreeContents, disabled?: boolean, selectable?: boolean }[];
 
 function buildTabObj(chromeTab: chrome.tabs.Tab): TabObj {
   return {
@@ -47,27 +49,52 @@ const getDomain = (url?: string) => {
   }
 };
 
-const filterTreeData = (nodes: TabObj[], searchValue: string): TabObj[] => {
-  if (!searchValue) return nodes;
-  return nodes.map(node => {
-    const children = filterTreeData(node.children, searchValue);
+const filterTreeDataGetIds = (tabMap: Record<number, TabObj>, nodeIds: number[], searchValue: string): number[] => {
+  if (!searchValue) return nodeIds;
+  return nodeIds.map<number | null>(id => {
+    const node = tabMap[id];
+    const children = filterTreeData(tabMap, node.children, searchValue);
     const match = (node.title?.toLowerCase().includes(searchValue.toLowerCase()) || 
                    node.url?.toLowerCase().includes(searchValue.toLowerCase()));
     if (match || children.length > 0) {
-      return { ...node, children };
+      return id;
     }
     return null;
-  }).filter((n): n is TabObj => n !== null);
+  }).filter((n): n is number => n !== null);
 };
+
+const filterTreeData = (tabMap: Record<number, TabObj>, nodeIds: number[], searchValue: string): TabObj[] => {
+  const filtered: number[] = filterTreeDataGetIds(tabMap, nodeIds, searchValue);
+  // get tabObject from tabMap
+  const tabs = filtered.map<TabObj>(id => { return tabMap[id]; });
+  return tabs;
+};
+
+const getTreeData = (tabMap: Record<number, TabObj>, roots: number[]): TreeContents => {
+  const buildTree = (nodeIds: number[]): TreeContents => {
+    return nodeIds.map(id => {
+      const node = tabMap[id];
+      return {
+        key: node.id,
+        title: node.title || '',
+        children: buildTree(node.children)
+      };
+    });
+  };
+
+  return buildTree(roots);
+};
+
 
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  const [roots, setRoots] = useState<TabObj[]>([]);
+  const [roots, setRoots] = useState<number[]>([]);
   const [tabMap, setTabMap] = useState<Record<number, TabObj>>({});
   const [activeKeys, setActiveKeys] = useState<number[]>([]);
   const [searchValue, setSearchValue] = useState('');
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [autoExpandParent, setAutoExpandParent] = useState(true);
+
 
   const initTree = useCallback(() => {
     setLoading(true);
@@ -75,7 +102,7 @@ const App: React.FC = () => {
       chrome.storage.local.get(['openerTabIdMap'], (result) => {
         const openerTabIdMap = result.openerTabIdMap || {};
         const newTabMap: Record<number, TabObj> = {};
-        const newRoots: TabObj[] = [];
+        const newRoots: number[] = [];
         const newActiveKeys: number[] = [];
 
         // 1. Create all TabObjs
@@ -95,9 +122,9 @@ const App: React.FC = () => {
         // 2. Link them
         Object.values(newTabMap).forEach((tabObj) => {
           if (tabObj.openerTabId && newTabMap[tabObj.openerTabId]) {
-            newTabMap[tabObj.openerTabId].children.push(tabObj);
+            newTabMap[tabObj.openerTabId].children.push(tabObj.id);
           } else {
-            newRoots.push(tabObj);
+            newRoots.push(tabObj.id);
           }
         });
 
@@ -111,57 +138,64 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const refreshHandler = (
+    const refreshHandler = async (
       message: any,
       sender: chrome.runtime.MessageSender,
       sendResponse: (response?: any) => void
     ) => {
+      sendResponse({ received: true });
       if (message?.action === "REFRESH") {
         switch (message?.type) {
           case "CREATE":
-            const createMessgae = message as AdditionMessageInterface;
-            const tabObj = buildTabObj(createMessgae.identifierOrTab);
+            const createMessage = message as AdditionMessageInterface;
+            const tabObj = buildTabObj(createMessage.identifierOrTab);
 
-            if (tabObj.openerTabId && tabMap[tabObj.openerTabId]) {
-              setTabMap((prevTabMap) => {
-                let newTabMap = { ...prevTabMap, [tabObj.id]: tabObj };
-                newTabMap[tabObj.openerTabId!].children.push(tabObj);
-                return newTabMap;
-              });
-            } else {
-              setRoots((prevRoots) => {
-                return [...prevRoots, tabObj];
-              })
-            }
+            setTabMap((prevTabMap) => {
+              let newTabMap: Record<number, TabObj> = { ...prevTabMap, [tabObj.id]: tabObj };
+              if (tabObj.openerTabId && tabMap[tabObj.openerTabId]) {
+                newTabMap[tabObj.openerTabId!].children.push(tabObj.id);
+              } else {
+                setRoots((prevRoots) => {
+                  return [...prevRoots, tabObj.id];
+                });
+              }
+
+              return newTabMap;
+            });
 
             break;
           case "DELETE":
             const deleteMessage = message as DeleteTabMessageInterface;
 
             // check if tab is top level by looking at roots
-            const isTopLevel = roots.some(root => root.id === deleteMessage.identifierOrTab);
+            const isTopLevel = roots.some(root => root === deleteMessage.identifierOrTab);
             const tab = tabMap[deleteMessage.identifierOrTab];
 
             if (isTopLevel) {
               setRoots((prevRoots) => {
-                const filteredRoots = prevRoots.filter(root => root.id !== tab.id);
+                let filteredRoots = prevRoots.filter(root => root !== tab.id);
                 if (tab.children) {
                   filteredRoots.push(...tab.children);
                 }
+
+                setTabMap((prevTabMap) => {
+                  let newTabMap = { ...prevTabMap };
+                  delete newTabMap[deleteMessage.identifierOrTab];
+                  return newTabMap;
+                });
                 return filteredRoots;
               });
 
             } else {
               // not top level
               setTabMap((prevTabMap) => {
-                const newTabMap = { ...prevTabMap };
-                const tabToDelete = newTabMap[deleteMessage.identifierOrTab];
+                let newTabMap = { ...prevTabMap };
+                let tabToDelete = newTabMap[deleteMessage.identifierOrTab];
                 if (tabToDelete && tabToDelete.openerTabId && newTabMap[tabToDelete.openerTabId]) {
-                  const parentTab = newTabMap[tabToDelete.openerTabId];
-                  parentTab.children = parentTab.children.filter(child => child.id !== tabToDelete.id);
+                  newTabMap[tabToDelete.openerTabId].children = newTabMap[tabToDelete.openerTabId].children.filter(child => child !== tabToDelete.id);
                   // add deleted tab's children to parent
                   if (tabToDelete.children) {
-                    parentTab.children.push(...tabToDelete.children);
+                    newTabMap[tabToDelete.openerTabId].children.push(...tabToDelete.children);
                   }
                 }
                 delete newTabMap[deleteMessage.identifierOrTab];
@@ -170,9 +204,9 @@ const App: React.FC = () => {
             }
 
             break;
-          case "UPDATE":
-            initTree();
-            break;
+          // case "UPDATE":
+          //   initTree();
+          //   break;
           default:
             break;
         }
@@ -211,7 +245,7 @@ const App: React.FC = () => {
     while (queue.length) {
       const current = queue.shift()!;
       visited.push(current.id);
-      if (current.children) queue.push(...current.children);
+      if (current.children) queue.push(...current.children.map(childId => tabMap[childId]).filter(Boolean));
     }
     return visited;
   };
@@ -319,7 +353,7 @@ const App: React.FC = () => {
     );
   };
 
-  const treeData = useMemo(() => filterTreeData(roots, searchValue), [roots, searchValue]);
+  const treeData = useMemo(() => getTreeData(tabMap, filterTreeDataGetIds(tabMap, roots, searchValue)), [tabMap, roots, searchValue]);
 
   return (
     <div className="App">
@@ -349,7 +383,6 @@ const App: React.FC = () => {
           </div>
         ) : treeData.length > 0 ? (
           <Tree
-            fieldNames={{ title: "title", key: "id", children: "children" }}
             showLine={false}
             switcherIcon={<CaretRightOutlined />}
             blockNode
