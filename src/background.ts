@@ -4,6 +4,7 @@ chrome.tabs.onCreated.addListener((tab: chrome.tabs.Tab) => {
     if(tab.pendingUrl !== "chrome://newtab/" && tab.openerTabId) {
       openerTabIdMap[tab.id as number] = tab.openerTabId
     }
+
     chrome.storage.local.set({ openerTabIdMap });
 
     // send message to the sidePanel to refresh everytime there's a change

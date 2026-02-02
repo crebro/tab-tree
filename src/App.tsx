@@ -24,7 +24,13 @@ interface TabObj {
   url?: string;
 }
 
-type TreeContents = { key: number, title: string, children?: TreeContents, disabled?: boolean, selectable?: boolean }[];
+// extending Omit allows the removal of a certain property's type definition
+interface TreeContentElement extends Omit<TabObj, 'children'> {
+  key: number,
+  children: TreeContentElement[]
+}
+
+type TreeContents = TreeContentElement[];
 
 function buildTabObj(chromeTab: chrome.tabs.Tab): TabObj {
   return {
@@ -75,8 +81,8 @@ const getTreeData = (tabMap: Record<number, TabObj>, roots: number[]): TreeConte
     return nodeIds.map(id => {
       const node = tabMap[id];
       return {
+        ...node,
         key: node.id,
-        title: node.title || '',
         children: buildTree(node.children)
       };
     });
@@ -150,12 +156,19 @@ const App: React.FC = () => {
 
             setTabMap((prevTabMap) => {
               let newTabMap: Record<number, TabObj> = { ...prevTabMap, [tabObj.id]: tabObj };
-              if (tabObj.openerTabId && tabMap[tabObj.openerTabId]) {
-                newTabMap[tabObj.openerTabId!].children.push(tabObj.id);
+              if (tabObj.openerTabId && prevTabMap[tabObj.openerTabId]) {
+                // avoid mutating previous state directly
+                const parent = newTabMap[tabObj.openerTabId];
+                newTabMap[tabObj.openerTabId] = { ...parent, children: [...(parent.children || []), tabObj.id] };
               }
 
               return newTabMap;
             });
+
+            // make sure parent is expanded so new tab is visible
+            if (tabObj.openerTabId) {
+              setExpandedKeys(prev => Array.from(new Set([...prev, tabObj.openerTabId!])));
+            }
 
             break;
           case "DELETE":
@@ -181,11 +194,13 @@ const App: React.FC = () => {
             const updateMessage = message as AdditionMessageInterface;
             const updatedTabObj = buildTabObj(updateMessage.identifierOrTab);
 
+            console.log(updatedTabObj, updateMessage.identifierOrTab);
+
               setTabMap((prevTabMap) => {
                 return { ...prevTabMap,
                   [updatedTabObj.id]: {
                   ...updatedTabObj,
-                  children: prevTabMap[updatedTabObj.id].children
+                  children: prevTabMap[updatedTabObj.id]?.children || []
                   }
                 };
               })
