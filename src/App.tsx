@@ -178,11 +178,16 @@ const App: React.FC = () => {
               let newTabMap = { ...prevTabMap };
               let tabToDelete = newTabMap[deleteMessage.identifierOrTab];
               if (tabToDelete && tabToDelete.openerTabId && newTabMap[tabToDelete.openerTabId]) {
-                // if tab has a parent, it's children should be reattached to parent
-                newTabMap[tabToDelete.openerTabId].children = newTabMap[tabToDelete.openerTabId].children.filter(child => child !== tabToDelete.id);
-                // add deleted tab's children to parent
-                if (tabToDelete.children) {
-                  newTabMap[tabToDelete.openerTabId].children.push(...tabToDelete.children);
+                // TO ANYONE WHO READS THIS CODE IN THE FUTURE
+                // I apologize--Writing in a differnet way would make react not refresh the component
+                // if tab has a parent, it's children will be reattached to parent
+                // also, do not include the current element in the list of parent's children
+                newTabMap = {
+                  ...newTabMap,
+                  [tabToDelete.openerTabId]: {
+                    ...newTabMap[tabToDelete.openerTabId],
+                    children: [...newTabMap[tabToDelete.openerTabId].children.filter(child => child != tabToDelete.id), ...( tabToDelete.children ?? [])],
+                  }
                 }
               }
               delete newTabMap[deleteMessage.identifierOrTab];
@@ -194,16 +199,14 @@ const App: React.FC = () => {
             const updateMessage = message as AdditionMessageInterface;
             const updatedTabObj = buildTabObj(updateMessage.identifierOrTab);
 
-            console.log(updatedTabObj, updateMessage.identifierOrTab);
-
-              setTabMap((prevTabMap) => {
-                return { ...prevTabMap,
-                  [updatedTabObj.id]: {
-                  ...updatedTabObj,
-                  children: prevTabMap[updatedTabObj.id]?.children || []
-                  }
-                };
-              })
+            setTabMap((prevTabMap) => {
+              return { ...prevTabMap,
+                [updatedTabObj.id]: {
+                ...updatedTabObj,
+                children: prevTabMap[updatedTabObj.id]?.children || []
+                }
+              };
+            })
 
             break;
           default:

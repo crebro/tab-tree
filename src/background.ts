@@ -37,7 +37,9 @@ chrome.tabs.onRemoved.addListener((removedTabId: number, removeInfo: chrome.tabs
 })
 
 chrome.tabs.onUpdated.addListener( async (_, __, tab: chrome.tabs.Tab) => {
-  await chrome.runtime.sendMessage<AdditionMessageInterface>({action: "REFRESH", type: "UPDATE", identifierOrTab: tab});
+  if (tab.status === "loading") {
+    await chrome.runtime.sendMessage<AdditionMessageInterface>({action: "REFRESH", type: "UPDATE", identifierOrTab: tab});
+  }
 })
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
